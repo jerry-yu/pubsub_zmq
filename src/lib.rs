@@ -288,16 +288,19 @@ pub fn start_zeromq(
     }
 }
 
-pub fn start_pubsub(
+pub fn start_pubsub<K>(
     name: &str,
-    keys: Vec<String>,
+    keys: Vec<K>,
     tx: Sender<(String, Vec<u8>)>,
     rx: Receiver<(String, Vec<u8>)>,
-) {
+) where
+    K: Into<String>,
+{
     let base_port: usize = {
         let tmp: usize = rand::thread_rng().gen();
         tmp.wrapping_sub(100)
     };
+    let keys: Vec<String> = keys.into_iter().map(Into::into).collect();
     start_zeromq(name, keys, tx, rx, "localhost".to_string(), base_port)
 }
 
