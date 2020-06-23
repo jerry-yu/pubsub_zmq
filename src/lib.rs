@@ -1,13 +1,17 @@
+pub use crossbeam_channel as channel;
+use crossbeam_channel::{Receiver, Sender};
+use lazy_static::lazy_static;
+use rand::Rng;
 use std::collections::HashMap;
-use std::sync::mpsc::Receiver;
-use std::sync::mpsc::Sender;
 use std::thread;
 
-pub const ZEROMQ_IP: &'static str = "ZEROMQ_IP";
-pub const ZEROMQ_BASE_PORT: &'static str = "ZEROMQ_BASE_PORT";
+use cita_logger::error;
+
+// pub const ZEROMQ_IP: &'static str = "ZEROMQ_IP";
+// pub const ZEROMQ_BASE_PORT: &'static str = "ZEROMQ_BASE_PORT";
 
 lazy_static! {
-    static ref SERVICE_PORT_INDEX: HashMap<&'static str, u16> = {
+    static ref SERVICE_PORT_INDEX: HashMap<&'static str, usize> = {
         let mut m = HashMap::new();
         m.insert("network", 0);
         m.insert("chain", 1);
@@ -42,7 +46,7 @@ pub fn start_zeromq(
     tx: Sender<(String, Vec<u8>)>,
     rx: Receiver<(String, Vec<u8>)>,
     ip: String,
-    base_port : u16,
+    base_port: usize,
 ) {
     // let mut ip = std::env::var(ZEROMQ_IP).expect(&*format!("{} must be set", ZEROMQ_IP));
     // let base_port = std::env::var(ZEROMQ_BASE_PORT)
@@ -282,6 +286,19 @@ pub fn start_zeromq(
                 thread_work(&net_tx_subscriber, &other_tx);
             });
     }
+}
+
+pub fn start_pubsub(
+    name: &str,
+    keys: Vec<String>,
+    tx: Sender<(String, Vec<u8>)>,
+    rx: Receiver<(String, Vec<u8>)>,
+) {
+    let base_port: usize = {
+        let tmp: usize = rand::thread_rng().gen();
+        tmp.wrapping_sub(100)
+    };
+    start_zeromq(name, keys, tx, rx, "localhost".to_string(), base_port)
 }
 
 #[cfg(test)]

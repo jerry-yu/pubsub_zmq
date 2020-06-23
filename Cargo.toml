@@ -4,12 +4,13 @@ version = "0.1.0"
 authors = ["yubo <anhuitianyu@163.com>"]
 edition = "2018"
 
-[dependencies.zmq]
-version = "0.9"
-default-features = false
-features = []
-
 [dependencies]
 cita-logger = "0.1.1"
 crossbeam-channel = "0.4"
 lazy_static = "1.4"
+rand = "0.7"
+zmq = "0.9.2"
+
+[features]
+default = ["vendored-zmq"]
+vendored-zmq = ['zmq/vendored']
