@@ -147,13 +147,13 @@ pub fn start_zeromq(
 
         flag = match v[0] {
             "net" => match v[1] {
-                "raw_bytes" | "signed_proposal" => {
+                "raw_bytes" | "compact_signed_proposal" => {
                     net_consensus_subscriber
                         .set_subscribe(&topic.into_bytes())
                         .unwrap();
                     flag | 0x80
                 }
-                "get_block_txn" | "block_txn" => {
+                "request" | "get_block_txn" | "block_txn" => {
                     net_tx_subscriber
                         .set_subscribe(&topic.into_bytes())
                         .unwrap();
