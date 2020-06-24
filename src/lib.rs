@@ -1,7 +1,6 @@
 pub use crossbeam_channel as channel;
 use crossbeam_channel::{Receiver, Sender};
 use lazy_static::lazy_static;
-use rand::Rng;
 use std::collections::HashMap;
 use std::thread;
 
@@ -9,6 +8,8 @@ use cita_logger::error;
 
 // pub const ZEROMQ_IP: &'static str = "ZEROMQ_IP";
 // pub const ZEROMQ_BASE_PORT: &'static str = "ZEROMQ_BASE_PORT";
+
+const AMQP_URL: &'static str = "AMQP_URL";
 
 lazy_static! {
     static ref SERVICE_PORT_INDEX: HashMap<&'static str, usize> = {
@@ -20,7 +21,7 @@ lazy_static! {
         m.insert("executor", 4);
         m.insert("auth", 5);
         m.insert("snapshot", 6);
-        m.insert("network_tx", 7);
+        m.insert("network_auth", 7);
         m.insert("network_consensus", 8);
         m
     };
@@ -46,14 +47,13 @@ pub fn start_zeromq(
     tx: Sender<(String, Vec<u8>)>,
     rx: Receiver<(String, Vec<u8>)>,
     ip: String,
-    base_port: usize,
 ) {
-    // let mut ip = std::env::var(ZEROMQ_IP).expect(&*format!("{} must be set", ZEROMQ_IP));
-    // let base_port = std::env::var(ZEROMQ_BASE_PORT)
-    //     .expect(&*format!("{} must be set", ZEROMQ_BASE_PORT))
-    //     .parse::<u16>()
-    //     .expect(&*format!("{} must be number", ZEROMQ_BASE_PORT));
-    //pub
+    let url = std::env::var(AMQP_URL).expect(&*format!("{} must be set", AMQP_URL));
+    let mut base_port: usize = 0;
+    for i in url.as_bytes() {
+        base_port += *i as usize;
+    }
+
     let mut ip = ip;
     let publisher = CONTEXT.socket(zmq::PUB).unwrap();
     let mut publish_flag = true;
@@ -67,7 +67,7 @@ pub fn start_zeromq(
         ip = "ipc".to_string();
     }
 
-    /*URL like tcp://8.8.8.8:6000  or like ipc://ipc6000*/
+    /* URL like tcp://8.8.8.8:6000  or like ipc://ipc6000 */
     let _ = SERVICE_PORT_INDEX.get(&name).map_or_else(
         || {
             publish_flag = false;
@@ -296,12 +296,8 @@ pub fn start_pubsub<K>(
 ) where
     K: Into<String>,
 {
-    let base_port: usize = {
-        let tmp: usize = rand::thread_rng().gen();
-        tmp.wrapping_sub(100)
-    };
     let keys: Vec<String> = keys.into_iter().map(Into::into).collect();
-    start_zeromq(name, keys, tx, rx, "localhost".to_string(), base_port)
+    start_zeromq(name, keys, tx, rx, "localhost".to_string())
 }
 
 #[cfg(test)]
