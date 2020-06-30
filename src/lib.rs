@@ -1,7 +1,9 @@
 pub use crossbeam_channel as channel;
 use crossbeam_channel::{Receiver, Sender};
 use lazy_static::lazy_static;
+use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 use std::thread;
 
 use cita_logger::error;
@@ -49,10 +51,9 @@ pub fn start_zeromq(
     ip: String,
 ) {
     let url = std::env::var(AMQP_URL).expect(&*format!("{} must be set", AMQP_URL));
-    let mut base_port: usize = 0;
-    for i in url.as_bytes() {
-        base_port += *i as usize;
-    }
+    let mut s = DefaultHasher::new();
+    url.hash(&mut s);
+    let base_port = (s.finish() % 1000000) as usize;
 
     let mut ip = ip;
     let publisher = CONTEXT.socket(zmq::PUB).unwrap();
@@ -102,6 +103,16 @@ pub fn start_zeromq(
     }
 
     //sub
+
+    // macro_rules!  {
+    //     (ctx:&CONTEXT,$name:ident,$base:expr,$inc:expr,) => {
+    //         let url = format!("ipc://{}", $base+$inc);
+    //         let $name = ctx.socket(zmq::SUB).unwrap();
+    //         $name.connect(&*url)
+    //             .expect(&*format!("zmq subscribe socket create error {}", url));
+    //         $name
+    //     };
+    // }
 
     let network_subscriber = new_sub_init(
         &CONTEXT,
