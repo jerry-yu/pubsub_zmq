@@ -7,20 +7,20 @@ use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
 use std::thread;
 
-// pub const ZEROMQ_IP: &'static str = "ZEROMQ_IP";
-// pub const ZEROMQ_BASE_PORT: &'static str = "ZEROMQ_BASE_PORT";
+// pub const ZEROMQ_IP: &str = "ZEROMQ_IP";
+// pub const ZEROMQ_BASE_PORT: &str = "ZEROMQ_BASE_PORT";
 
-const AMQP_URL: &'static str = "AMQP_URL";
+const AMQP_URL: &str = "AMQP_URL";
 
-const NET_SERVICE: &'static str = "network";
-const CHAIN_SERVICE: &'static str = "chain";
-const JSONRPC_SERVICE: &'static str = "jsonrpc";
-const CONSENSUS_SERVICE: &'static str = "consensus";
-const EXECUTOR_SERVICE: &'static str = "executor";
-const AUTH_SERVICE: &'static str = "auth";
-const SNAPSHOT_SERVICE: &'static str = "snapshot";
-const NETAUTH_SERVICE: &'static str = "network_auth";
-const NETCONSENSUS_SERVICE: &'static str = "network_consensus";
+const NET_SERVICE: &str = "network";
+const CHAIN_SERVICE: &str = "chain";
+const JSONRPC_SERVICE: &str = "jsonrpc";
+const CONSENSUS_SERVICE: &str = "consensus";
+const EXECUTOR_SERVICE: &str = "executor";
+const AUTH_SERVICE: &str = "auth";
+const SNAPSHOT_SERVICE: &str = "snapshot";
+const NETAUTH_SERVICE: &str = "network_auth";
+const NETCONSENSUS_SERVICE: &str = "network_consensus";
 
 lazy_static! {
     static ref SERVICE_PORT_INDEX: BTreeMap<&'static str, usize> = {
@@ -83,7 +83,7 @@ fn get_zmq_url(service_name: &str, base_port: usize) -> Option<String> {
 }
 
 fn subscribe_topic(keys: Vec<String>) -> BTreeMap<&'static str, Vec<String>> {
-    let mut service_topics: BTreeMap<&'static str, Vec<String>> = BTreeMap::new();
+    let mut service_topics: BTreeMap<&str, Vec<String>> = BTreeMap::new();
     for topic in keys {
         let tmp = topic.clone();
         let v: Vec<&str> = tmp.split('.').collect();
@@ -142,7 +142,7 @@ fn get_base_number() -> usize {
     let mq_url = std::env::var(AMQP_URL).expect(&*format!("{} must be set", AMQP_URL));
     let mut s = DefaultHasher::new();
     mq_url.hash(&mut s);
-    (s.finish() % 1000000) as usize
+    (s.finish() % 1_000_000) as usize
 }
 
 pub fn start_zeromq(
