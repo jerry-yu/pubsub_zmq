@@ -1,30 +1,39 @@
+use cita_logger::{error, warn};
 pub use crossbeam_channel as channel;
 use crossbeam_channel::{Receiver, Sender};
 use lazy_static::lazy_static;
 use std::collections::hash_map::DefaultHasher;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
 use std::thread;
-
-use cita_logger::error;
 
 // pub const ZEROMQ_IP: &'static str = "ZEROMQ_IP";
 // pub const ZEROMQ_BASE_PORT: &'static str = "ZEROMQ_BASE_PORT";
 
 const AMQP_URL: &'static str = "AMQP_URL";
 
+const NET_SERVICE: &'static str = "network";
+const CHAIN_SERVICE: &'static str = "chain";
+const JSONRPC_SERVICE: &'static str = "jsonrpc";
+const CONSENSUS_SERVICE: &'static str = "consensus";
+const EXECUTOR_SERVICE: &'static str = "executor";
+const AUTH_SERVICE: &'static str = "auth";
+const SNAPSHOT_SERVICE: &'static str = "snapshot";
+const NETAUTH_SERVICE: &'static str = "network_auth";
+const NETCONSENSUS_SERVICE: &'static str = "network_consensus";
+
 lazy_static! {
-    static ref SERVICE_PORT_INDEX: HashMap<&'static str, usize> = {
-        let mut m = HashMap::new();
-        m.insert("network", 0);
-        m.insert("chain", 1);
-        m.insert("jsonrpc", 2);
-        m.insert("consensus", 3);
-        m.insert("executor", 4);
-        m.insert("auth", 5);
-        m.insert("snapshot", 6);
-        m.insert("network_auth", 7);
-        m.insert("network_consensus", 8);
+    static ref SERVICE_PORT_INDEX: BTreeMap<&'static str, usize> = {
+        let mut m = BTreeMap::new();
+        m.insert(NET_SERVICE, 0);
+        m.insert(CHAIN_SERVICE, 1);
+        m.insert(JSONRPC_SERVICE, 2);
+        m.insert(CONSENSUS_SERVICE, 3);
+        m.insert(EXECUTOR_SERVICE, 4);
+        m.insert(AUTH_SERVICE, 5);
+        m.insert(SNAPSHOT_SERVICE, 6);
+        m.insert(NETAUTH_SERVICE, 7);
+        m.insert(NETCONSENSUS_SERVICE, 8);
         m
     };
     static ref CONTEXT: zmq::Context = zmq::Context::new();
@@ -43,259 +52,129 @@ fn thread_work(sub: &zmq::Socket, msg_sender: &Sender<(String, Vec<u8>)>) {
     let _ = msg_sender.send((topic, msg));
 }
 
+fn spawn_publisher(
+    name: Option<&str>,
+    bind_url: String,
+    rx_then_publish: Receiver<(String, Vec<u8>)>,
+) {
+    let publisher = CONTEXT.socket(zmq::PUB).unwrap();
+    publisher
+        .bind(&*bind_url)
+        .expect(&*format!("publisher bind error {}", bind_url));
+
+    let _ = thread::Builder::new()
+        .name(name.unwrap_or("publisher").to_string())
+        .spawn(move || loop {
+            let ret = rx_then_publish.recv();
+
+            if ret.is_err() {
+                break;
+            }
+            let (topic, msg) = ret.unwrap();
+            let _ = publisher.send_multipart(&[&(topic.into_bytes())], zmq::SNDMORE);
+            let _ = publisher.send(&msg, 0);
+        });
+}
+
+fn get_zmq_url(service_name: &str, base_port: usize) -> Option<String> {
+    SERVICE_PORT_INDEX
+        .get(service_name)
+        .map(|idx| format!("ipc://ipc{}", base_port + idx))
+}
+
+fn subscribe_topic(keys: Vec<String>) -> BTreeMap<&'static str, Vec<String>> {
+    let mut service_topics: BTreeMap<&'static str, Vec<String>> = BTreeMap::new();
+    for topic in keys {
+        let tmp = topic.clone();
+        let v: Vec<&str> = tmp.split('.').collect();
+        match v[0] {
+            "net" => match v[1] {
+                "raw_bytes" | "compact_signed_proposal" => {
+                    service_topics
+                        .entry(NETCONSENSUS_SERVICE)
+                        .or_default()
+                        .push(tmp);
+                }
+                "request" | "get_block_txn" | "block_txn" => {
+                    service_topics.entry(NETAUTH_SERVICE).or_default().push(tmp);
+                }
+                _ => {
+                    service_topics.entry(NET_SERVICE).or_default().push(tmp);
+                }
+            },
+            "chain" => {
+                service_topics.entry(CHAIN_SERVICE).or_default().push(tmp);
+            }
+            "jsonrpc" => {
+                service_topics.entry(JSONRPC_SERVICE).or_default().push(tmp);
+            }
+            "consensus" => {
+                service_topics
+                    .entry(CONSENSUS_SERVICE)
+                    .or_default()
+                    .push(tmp);
+            }
+            "executor" => {
+                service_topics
+                    .entry(EXECUTOR_SERVICE)
+                    .or_default()
+                    .push(tmp);
+            }
+            "auth" => {
+                service_topics.entry(AUTH_SERVICE).or_default().push(tmp);
+            }
+            "snapshot" => {
+                service_topics
+                    .entry(SNAPSHOT_SERVICE)
+                    .or_default()
+                    .push(tmp);
+            }
+            "synchronizer" => {}
+            _ => {
+                error!("invalid  flag! topic {}", tmp);
+            }
+        }
+    }
+    service_topics
+}
+
+fn get_base_number() -> usize {
+    let mq_url = std::env::var(AMQP_URL).expect(&*format!("{} must be set", AMQP_URL));
+    let mut s = DefaultHasher::new();
+    mq_url.hash(&mut s);
+    (s.finish() % 1000000) as usize
+}
+
 pub fn start_zeromq(
     name: &str,
     keys: Vec<String>,
     tx: Sender<(String, Vec<u8>)>,
     rx: Receiver<(String, Vec<u8>)>,
-    ip: String,
 ) {
-    let url = std::env::var(AMQP_URL).expect(&*format!("{} must be set", AMQP_URL));
-    let mut s = DefaultHasher::new();
-    url.hash(&mut s);
-    let base_port = (s.finish() % 1000000) as usize;
-
-    let mut ip = ip;
-    let publisher = CONTEXT.socket(zmq::PUB).unwrap();
-    let mut publish_flag = true;
-    let mut delimiter = ":".to_string();
-    let mut con_type = "tcp".to_string();
-    let mut wild_cast = "*".to_string();
-    if ip == "localhost" || ip == "127.0.0.1" {
-        delimiter = "".to_string();
-        con_type = "ipc".to_string();
-        wild_cast = "ipc".to_string();
-        ip = "ipc".to_string();
+    let base_port = get_base_number();
+    if let Some(url) = get_zmq_url(name, base_port) {
+        spawn_publisher(None, url, rx);
+    } else {
+        return;
     }
 
-    /* URL like tcp://8.8.8.8:6000  or like ipc://ipc6000 */
-    let _ = SERVICE_PORT_INDEX.get(&name).map_or_else(
-        || {
-            publish_flag = false;
-        },
-        |idx| {
-            let url = format!(
-                "{}://{}{}{}",
-                con_type,
-                wild_cast,
-                delimiter,
-                base_port + idx
-            );
-            publisher
-                .bind(&*url)
-                .expect(&*format!("publisher bind error {}", url));
-        },
-    );
-
-    if publish_flag {
-        let _ = thread::Builder::new()
-            .name("publisher".to_string())
-            .spawn(move || loop {
-                let ret = rx.recv();
-
-                if ret.is_err() {
-                    break;
-                }
-                let (topic, msg) = ret.unwrap();
-                let _ = publisher.send_multipart(&[&(topic.into_bytes())], zmq::SNDMORE);
-                let _ = publisher.send(&msg, 0);
-            });
-    }
-
-    //sub
-
-    // macro_rules!  {
-    //     (ctx:&CONTEXT,$name:ident,$base:expr,$inc:expr,) => {
-    //         let url = format!("ipc://{}", $base+$inc);
-    //         let $name = ctx.socket(zmq::SUB).unwrap();
-    //         $name.connect(&*url)
-    //             .expect(&*format!("zmq subscribe socket create error {}", url));
-    //         $name
-    //     };
-    // }
-
-    let network_subscriber = new_sub_init(
-        &CONTEXT,
-        format!("{}://{}{}{}", con_type, ip, delimiter, base_port),
-    );
-    let chain_subscriber = new_sub_init(
-        &CONTEXT,
-        format!("{}://{}{}{}", con_type, ip, delimiter, base_port + 1),
-    );
-    let jsonrpc_subscriber = new_sub_init(
-        &CONTEXT,
-        format!("{}://{}{}{}", con_type, ip, delimiter, base_port + 2),
-    );
-    let consensus_subscriber = new_sub_init(
-        &CONTEXT,
-        format!("{}://{}{}{}", con_type, ip, delimiter, base_port + 3),
-    );
-    let executor_subscriber = new_sub_init(
-        &CONTEXT,
-        format!("{}://{}{}{}", con_type, ip, delimiter, base_port + 4),
-    );
-    let auth_subscriber = new_sub_init(
-        &CONTEXT,
-        format!("{}://{}{}{}", con_type, ip, delimiter, base_port + 5),
-    );
-    let snapshot_subscriber = new_sub_init(
-        &CONTEXT,
-        format!("{}://{}{}{}", con_type, ip, delimiter, base_port + 6),
-    );
-    let net_tx_subscriber = new_sub_init(
-        &CONTEXT,
-        format!("{}://{}{}{}", con_type, ip, delimiter, base_port + 7),
-    );
-    let net_consensus_subscriber = new_sub_init(
-        &CONTEXT,
-        format!("{}://{}{}{}", con_type, ip, delimiter, base_port + 8),
-    );
-
-    let mut flag = 0;
-    for topic in keys {
-        let tmp = topic.clone();
-        let v: Vec<&str> = tmp.split('.').collect();
-
-        flag = match v[0] {
-            "net" => match v[1] {
-                "raw_bytes" | "compact_signed_proposal" => {
-                    net_consensus_subscriber
-                        .set_subscribe(&topic.into_bytes())
-                        .unwrap();
-                    flag | 0x80
-                }
-                "request" | "get_block_txn" | "block_txn" => {
-                    net_tx_subscriber
-                        .set_subscribe(&topic.into_bytes())
-                        .unwrap();
-                    flag | 0x100
-                }
-                _ => {
-                    network_subscriber
-                        .set_subscribe(&topic.into_bytes())
-                        .unwrap();
-                    flag | 0x01
-                }
-            },
-            "chain" => {
-                chain_subscriber.set_subscribe(&topic.into_bytes()).unwrap();
-                flag | 0x02
+    let serv_topics = subscribe_topic(keys);
+    for (ser_name, topics) in serv_topics {
+        if let Some(url) = get_zmq_url(ser_name, base_port) {
+            let subscriber = new_sub_init(&CONTEXT, url);
+            for topic in topics {
+                subscriber.set_subscribe(&topic.into_bytes()).unwrap();
             }
-            "jsonrpc" => {
-                jsonrpc_subscriber
-                    .set_subscribe(&topic.into_bytes())
-                    .unwrap();
-                flag | 0x04
-            }
-            "consensus" => {
-                consensus_subscriber
-                    .set_subscribe(&topic.into_bytes())
-                    .unwrap();
-                flag | 0x08
-            }
-            "executor" => {
-                executor_subscriber
-                    .set_subscribe(&topic.into_bytes())
-                    .unwrap();
-                flag | 0x10
-            }
-            "auth" => {
-                auth_subscriber.set_subscribe(&topic.into_bytes()).unwrap();
-                flag | 0x20
-            }
-            "snapshot" => {
-                snapshot_subscriber
-                    .set_subscribe(&topic.into_bytes())
-                    .unwrap();
-                flag | 0x40
-            }
-            "synchronizer" => flag,
-            _ => {
-                error!("invalid  flag! topic {}", tmp);
-                flag
-            }
+
+            let other_tx = tx.clone();
+            let _ = thread::Builder::new()
+                .name(ser_name.to_string())
+                .spawn(move || loop {
+                    thread_work(&subscriber, &other_tx);
+                });
+        } else {
+            warn!("Not recongnize sername {}", ser_name)
         }
-    }
-
-    if flag & 0x01 != 0 {
-        let other_tx = tx.clone();
-        let _ = thread::Builder::new()
-            .name("network_subscriber".to_string())
-            .spawn(move || loop {
-                thread_work(&network_subscriber, &other_tx);
-            });
-    }
-
-    if flag & 0x02 != 0 {
-        let other_tx = tx.clone();
-        let _ = thread::Builder::new()
-            .name("chain_subscriber".to_string())
-            .spawn(move || loop {
-                thread_work(&chain_subscriber, &other_tx);
-            });
-    }
-
-    if flag & 0x04 != 0 {
-        let other_tx = tx.clone();
-        let _ = thread::Builder::new()
-            .name("jsonrpc_subscriber".to_string())
-            .spawn(move || loop {
-                thread_work(&jsonrpc_subscriber, &other_tx);
-            });
-    }
-
-    if flag & 0x08 != 0 {
-        let other_tx = tx.clone();
-        let _ = thread::Builder::new()
-            .name("consensus_subscriber".to_string())
-            .spawn(move || loop {
-                thread_work(&consensus_subscriber, &other_tx);
-            });
-    }
-
-    if flag & 0x10 != 0 {
-        let other_tx = tx.clone();
-        let _ = thread::Builder::new()
-            .name("executor_subscriber".to_string())
-            .spawn(move || loop {
-                thread_work(&executor_subscriber, &other_tx);
-            });
-    }
-
-    if flag & 0x20 != 0 {
-        let other_tx = tx.clone();
-        let _ = thread::Builder::new()
-            .name("auth_subscriber".to_string())
-            .spawn(move || loop {
-                thread_work(&auth_subscriber, &other_tx);
-            });
-    }
-
-    if flag & 0x40 != 0 {
-        let other_tx = tx.clone();
-        let _ = thread::Builder::new()
-            .name("snapshot_subscriber".to_string())
-            .spawn(move || loop {
-                thread_work(&snapshot_subscriber, &other_tx);
-            });
-    }
-
-    if flag & 0x80 != 0 {
-        let other_tx = tx.clone();
-        let _ = thread::Builder::new()
-            .name("net_consensus_subscriber".to_string())
-            .spawn(move || loop {
-                thread_work(&net_consensus_subscriber, &other_tx);
-            });
-    }
-
-    if flag & 0x100 != 0 {
-        let other_tx = tx.clone();
-        let _ = thread::Builder::new()
-            .name("net_tx_subscriber".to_string())
-            .spawn(move || loop {
-                thread_work(&net_tx_subscriber, &other_tx);
-            });
     }
 }
 
@@ -308,13 +187,5 @@ pub fn start_pubsub<K>(
     K: Into<String>,
 {
     let keys: Vec<String> = keys.into_iter().map(Into::into).collect();
-    start_zeromq(name, keys, tx, rx, "localhost".to_string())
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        assert_eq!(2 + 2, 4);
-    }
+    start_zeromq(name, keys, tx, rx)
 }
