@@ -93,45 +93,51 @@ fn subscribe_topic(keys: Vec<String>) -> BTreeMap<&'static str, Vec<String>> {
                     service_topics
                         .entry(NETCONSENSUS_SERVICE)
                         .or_default()
-                        .push(tmp);
+                        .push(topic);
                 }
                 "request" | "get_block_txn" | "block_txn" => {
-                    service_topics.entry(NETAUTH_SERVICE).or_default().push(tmp);
+                    service_topics
+                        .entry(NETAUTH_SERVICE)
+                        .or_default()
+                        .push(topic);
                 }
                 _ => {
-                    service_topics.entry(NET_SERVICE).or_default().push(tmp);
+                    service_topics.entry(NET_SERVICE).or_default().push(topic);
                 }
             },
             "chain" => {
-                service_topics.entry(CHAIN_SERVICE).or_default().push(tmp);
+                service_topics.entry(CHAIN_SERVICE).or_default().push(topic);
             }
             "jsonrpc" => {
-                service_topics.entry(JSONRPC_SERVICE).or_default().push(tmp);
+                service_topics
+                    .entry(JSONRPC_SERVICE)
+                    .or_default()
+                    .push(topic);
             }
             "consensus" => {
                 service_topics
                     .entry(CONSENSUS_SERVICE)
                     .or_default()
-                    .push(tmp);
+                    .push(topic);
             }
             "executor" => {
                 service_topics
                     .entry(EXECUTOR_SERVICE)
                     .or_default()
-                    .push(tmp);
+                    .push(topic);
             }
             "auth" => {
-                service_topics.entry(AUTH_SERVICE).or_default().push(tmp);
+                service_topics.entry(AUTH_SERVICE).or_default().push(topic);
             }
             "snapshot" => {
                 service_topics
                     .entry(SNAPSHOT_SERVICE)
                     .or_default()
-                    .push(tmp);
+                    .push(topic);
             }
             "synchronizer" => {}
             _ => {
-                error!("invalid  flag! topic {}", tmp);
+                error!("invalid  flag! topic {}", topic);
             }
         }
     }
