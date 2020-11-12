@@ -79,7 +79,7 @@ fn spawn_publisher(
 fn get_zmq_url(service_name: &str, base_port: usize) -> Option<String> {
     SERVICE_PORT_INDEX
         .get(service_name)
-        .map(|idx| format!("tcp://127.0.0.1:{}", base_port + idx))
+        .map(|idx| format!("ipc://ipc{}", base_port + idx))
 }
 
 fn subscribe_topic(keys: Vec<String>) -> BTreeMap<&'static str, Vec<String>> {
@@ -144,35 +144,11 @@ fn subscribe_topic(keys: Vec<String>) -> BTreeMap<&'static str, Vec<String>> {
     service_topics
 }
 
-fn get_base_number_second() -> usize {
+fn get_base_number() -> usize {
     let mq_url = std::env::var(AMQP_URL).expect(&*format!("{} must be set", AMQP_URL));
     let mut s = DefaultHasher::new();
     mq_url.hash(&mut s);
-    let mut base_num = (s.finish() % (65535 - 100)) as usize;
-    if base_num < 1024 {
-        base_num += 1024;
-    }
-    base_num
-}
-
-fn get_base_number() -> usize {
-    let mq_url = std::env::var(AMQP_URL).expect(&*format!("{} must be set", AMQP_URL));
-    let elems: Vec<&str> = mq_url.split('/').collect();
-    if elems.is_empty() {
-        return get_base_number_second();
-    }
-
-    let config_num = elems.last().unwrap().parse::<usize>();
-    if config_num.is_err() {
-        return get_base_number_second();
-    }
-
-    let mut config_num = config_num.unwrap();
-    if config_num > 2500 {
-        config_num -= 2500;
-    }
-
-    10_000 + config_num * 20
+    (s.finish() % 1_000_000) as usize
 }
 
 pub fn start_zeromq(
