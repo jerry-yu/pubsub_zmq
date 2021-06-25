@@ -2,15 +2,14 @@ use cita_logger::{error, warn};
 pub use crossbeam_channel as channel;
 use crossbeam_channel::{Receiver, Sender};
 use lazy_static::lazy_static;
-use std::collections::hash_map::DefaultHasher;
 use std::collections::BTreeMap;
-use std::hash::{Hash, Hasher};
 use std::thread;
 
 // pub const ZEROMQ_IP: &str = "ZEROMQ_IP";
 // pub const ZEROMQ_BASE_PORT: &str = "ZEROMQ_BASE_PORT";
 
-const AMQP_URL: &str = "AMQP_URL";
+pub const MQ_BASE_PORT: &str = "MQ_BASE_PORT";
+pub const MQ_BASE_HOST: &str = "MQ_BASE_HOST";
 
 const NET_SERVICE: &str = "network";
 const CHAIN_SERVICE: &str = "chain";
@@ -76,10 +75,10 @@ fn spawn_publisher(
         });
 }
 
-fn get_zmq_url(service_name: &str, base_port: usize) -> Option<String> {
+fn get_zmq_url(service_name: &str, base_host: &str, base_port: usize) -> Option<String> {
     SERVICE_PORT_INDEX
         .get(service_name)
-        .map(|idx| format!("ipc://ipc{}", base_port + idx))
+        .map(|idx| format!("tcp://{}:{}", base_host, base_port + idx))
 }
 
 fn subscribe_topic(keys: Vec<String>) -> BTreeMap<&'static str, Vec<String>> {
@@ -145,10 +144,13 @@ fn subscribe_topic(keys: Vec<String>) -> BTreeMap<&'static str, Vec<String>> {
 }
 
 fn get_base_number() -> usize {
-    let mq_url = std::env::var(AMQP_URL).expect(&*format!("{} must be set", AMQP_URL));
-    let mut s = DefaultHasher::new();
-    mq_url.hash(&mut s);
-    (s.finish() % 1_000_000) as usize
+    let base_str = std::env::var(MQ_BASE_PORT).unwrap_or("9527".to_string());
+    let base_number = base_str.parse::<usize>().unwrap_or(9527);
+    base_number % 65_536
+}
+
+fn get_base_host() -> String {
+    std::env::var(MQ_BASE_HOST).unwrap_or("*".to_string())
 }
 
 pub fn start_zeromq(
@@ -158,7 +160,8 @@ pub fn start_zeromq(
     rx: Receiver<(String, Vec<u8>)>,
 ) {
     let base_port = get_base_number();
-    if let Some(url) = get_zmq_url(name, base_port) {
+    let base_host = get_base_host();
+    if let Some(url) = get_zmq_url(name, &base_host, base_port) {
         spawn_publisher(None, url, rx);
     } else {
         return;
@@ -166,7 +169,7 @@ pub fn start_zeromq(
 
     let serv_topics = subscribe_topic(keys);
     for (ser_name, topics) in serv_topics {
-        if let Some(url) = get_zmq_url(ser_name, base_port) {
+        if let Some(url) = get_zmq_url(ser_name, &base_host, base_port) {
             let subscriber = new_sub_init(&CONTEXT, url);
             for topic in topics {
                 subscriber.set_subscribe(&topic.into_bytes()).unwrap();
